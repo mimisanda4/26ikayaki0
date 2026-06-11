@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>イカ焼き注文管理</title>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<style>
+body { font-family: sans-serif; padding: 20px; max-width: 700px; margin: auto; }
+button { margin: 5px 4px; padding: 10px 14px; font-size:16px; border-radius:6px; }
+button.selected { background-color: #aaf; }
+table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+th, td { border: 1px solid #aaa; padding: 8px; text-align: center; font-size:15px; }
+.completed { background-color: #d4ffd4; }
+.section { margin-top: 15px; }
+.section-scroll { overflow-x:auto; white-space:nowrap; }
+.section-scroll button { display:inline-block; min-width:45px; }
+</style>
+</head>
+<body>
+
+<h2>イカ焼き注文管理</h2>
+
+<!-- 整理番号 -->
+<div class="section section-scroll">
+  整理番号:
+  <span id="seqButtons"></span>
+</div>
+
+<!-- 種類 -->
+<div class="section">
+  種類:
+  <button onclick="toggleButton(this,'type','ノーマル')">ノーマル</button>
+  <button onclick="toggleButton(this,'type','明太')">明太</button>
+  <button onclick="toggleButton(this,'type','チーズ')">チーズ</button>
+  <button onclick="toggleButton(this,'type','ねぎ')">ねぎ</button>
+  <button onclick="toggleButton(this,'type','明太チーズ')">明太チーズ</button>
+  <button onclick="toggleButton(this,'type','明太ねぎ')">明太ねぎ</button>
+  <button onclick="toggleButton(this,'type','チーズねぎ')">チーズねぎ</button>
+</div>
+
+<!-- 数量 -->
+<div class="section">
+  数量:
+  <button onclick="toggleButton(this,'qty',1)">1</button>
+  <button onclick="toggleButton(this,'qty',2)">2</button>
+  <button onclick="toggleButton(this,'qty',3)">3</button>
+  <button onclick="toggleButton(this,'qty',4)">4</button>
+  <button onclick="toggleButton(this,'qty',5)">5</button>
+  <button onclick="confirmAddOrder()">注文追加</button>
+</div>
+
+<p>合計個数: <span id="totalQty">0</span> / 合計金額: <span id="totalPrice">0</span>円</p>
+
+<table id="orderTable">
+  <thead>
+    <tr>
+      <th>整理番号</th>
+      <th>種類</th>
+      <th>数量</th>
+      <th>金額</th>
+      <th>ステータス</th>
+      <th>削除</th>
+    </tr>
+  </thead>
+  <tbody></tbody>
+</table>
+
+<script>
+// Firebase初期化
+ const firebaseConfig = {
+    apiKey: "AIzaSyBqOmSrFImEjzJOROC4NFNGzpJz5xWYY0M",
+    authDomain: "iakyaki20260.firebaseapp.com",
+    projectId: "iakyaki20260",
+    storageBucket: "iakyaki20260.firebasestorage.app",
+    messagingSenderId: "973435343008",
+    appId: "1:973435343008:web:91ab4dfb12e6ae45b6f9c5"
+  };
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+
+let selected = { seq:null, type:'', qty:null };
+const itemPrices = {
+  "ノーマル":500, 
+  "明太":600, 
+  "チーズ":600, 
+  "ねぎ":600,
+  "明太チーズ":650, 
+  "明太ねぎ":650, 
+  "チーズねぎ":650
+};
+let orders = [];
+
+// 整理番号ボタン生成
+const seqContainer = document.getElementById("seqButtons");
+for(let i=1;i<=50;i++){
+  const btn = document.createElement("button");
+  btn.textContent=i;
+  btn.onclick=()=>toggleButton(btn,'seq',i);
+  seqContainer.appendChild(btn);
+}
+
+// ボタン選択
+function toggleButton(btn,key,value){
+  if(selected[key]===value){
+    selected[key]=(key==='qty'||key==='seq')? null:''; 
+    btn.classList.remove('selected');
+  } else {
+    selected[key]=value;
+    Array.from(btn.parentElement.children).forEach(b=>{ if(b!==btn) b.classList.remove('selected'); });
+    btn.classList.add('selected');
+  }
+}
+
+// 注文追加
+function confirmAddOrder(){
+  if(!selected.seq){ alert("整理番号を選んでね"); return; }
+  if(!selected.type){ alert("種類を選んでね"); return; }
+  if(!selected.qty){ alert("数量を選んでね"); return; }
+
+  const unitPrice = itemPrices[selected.type] || 0;
+
+  const newOrder = {
+    seq: selected.seq,
+    type: selected.type,
+    qty: selected.qty,
+    price: unitPrice,
+    total: unitPrice * selected.qty,
+    status: 0,
+    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+  };
+
+  db.collection("orders").add(newOrder).then(()=>{
+    selected = { seq:null, type:'', qty:null };
+    document.querySelectorAll('.section button').forEach(b=>b.classList.remove('selected'));
+  });
+}
+
+// Firestoreリアルタイム取得
+db.collection("orders").orderBy("createdAt").onSnapshot(snapshot=>{
+  orders=[];
+  snapshot.forEach(doc=>{
+    const data=doc.data(); data.id=doc.id;
+    orders.push(data);
+  });
+  renderOrders();
+});
+
+// 表示
+function renderOrders(){
+  const tbody=document.querySelector("#orderTable tbody");
+  tbody.innerHTML='';
+
+  let filtered = orders.sort((a,b)=>{
+    if(a.status!==b.status) return a.status-b.status;
+    return a.seq-b.seq;
+  });
+
+  let totalQty=0,totalPrice=0;
+  filtered.forEach(o=>{
+    const itemTotal = o.total ?? (o.qty * o.price);
+    totalQty+=o.qty;
+    totalPrice+=itemTotal;
+
+    const tr=document.createElement("tr");
+    if(o.status===1) tr.classList.add("completed");
+    tr.innerHTML=`
+      <td>${o.seq}</td>
+      <td>${o.type}</td>
+      <td>${o.qty}</td>
+      <td>${itemTotal}</td>
+      <td><button onclick="toggleStatus('${o.id}',${o.status})">${o.status===0?'未完了':'完了'}</button></td>
+      <td><button onclick="deleteOrder('${o.id}')">削除</button></td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  document.getElementById("totalQty").textContent=totalQty;
+  document.getElementById("totalPrice").textContent=totalPrice;
+}
+
+// ステータス変更
+function toggleStatus(id,status){
+  const newStatus=status===0?1:0;
+  db.collection("orders").doc(id).update({status:newStatus});
+}
+
+// 削除
+function deleteOrder(id){
+  if(confirm("削除しますか？")){
+    db.collection("orders").doc(id).delete();
+  }
+}
+</script>
+</body>
+</html>
